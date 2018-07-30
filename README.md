@@ -1,4 +1,4 @@
-# http-server
+# HTTP-Server
 
 ## Author: Zhanfu Yang.    yang1676@purdue.edu
 
@@ -34,7 +34,7 @@ Change the finger with the environment_variables with Finger=<Actually file path
 
 #### In the jj:
 
-`Change the cgi-script/jj.c  search for the line www.zhanfuyang.com:50011 change it to your actual DNS and port`
+Change the cgi-script/jj.c  search for the line www.zhanfuyang.com:50011 change it to your actual DNS and port
                                                                                                         
 `make clean                                                                                                    `
                                                                                                               
