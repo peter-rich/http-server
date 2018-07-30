@@ -20,7 +20,7 @@
                                                                  
 `./run.sh                                                        ` 
 
-In the directory httpServer/
+### In the directory httpServer/
 
 Then 'http-root/' is the '/' directory.
 
@@ -28,11 +28,11 @@ Then 'http-root/' is the '/' directory.
 
 Like piazza or finger. you need to change some line
 
-In the finger:
+#### In the finger:
 
-`Change the finger with the environment_variables with Finger=<Actually file path>`
+Change the finger with the environment_variables with Finger=<Actually file path>
 
-In the jj:
+#### In the jj:
 
 `Change the cgi-script/jj.c  search for the line www.zhanfuyang.com:50011 change it to your actual DNS and port`
                                                                                                         
