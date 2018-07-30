@@ -1,0 +1,394 @@
+//
+//	myhttpd.cc
+//	
+//	Zhanfu Yang	
+//	
+//	www.zhanfuyang.com
+//	
+
+const char * usage =
+"                                                               \n"
+"usage: myhttpd [-f|-p] [<port>]                                \n"
+"								\n"
+"	1024 < port < 65536					\n"
+"                                                               \n"
+"	-f: Create a new process for each request 	        \n"
+"       							\n"
+"	-p: Pool of processed			                \n"
+"                                                               \n"
+"                                                               \n";
+
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <time.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <errno.h>
+#include <pthread.h>
+
+int QueueLength = 5;
+
+int debug = 1; // enable for debug messages
+
+int Concurrency = 0; // 0 = none, 1 = [-f] process based, 2 = [-p] thread pool based
+
+void processRequest(int socket);
+void processRequestThread(int socket);
+void poolSlave(int socket);
+
+pthread_mutex_t mt;
+pthread_mutexattr_t mattr;
+
+int main( int argc, char **argv) {
+	//Print usage if not enough arguments
+	if( argc > 3 || argc < 2 || (argc > 1 && argv[1][0] == '-' && argc < 3)){
+		fprintf(stderr, "%s", usage);
+		exit(-1);
+	}
+	
+	int port = 0;
+
+	// Get the concurrency type from the arguments
+	if (argc > 1 && argv[1][0] == '-'){
+		if (argv[1][1] == 'f'){
+			Concurrency = 1;
+			if (debug == 1) printf("Using concurrency mode: process based. \n");
+		}
+	
+		else if (argv[1][1] == 'p'){
+			Concurrency = 2;
+			if (debug == 1) printf("Using concurrency mode: thread pool based.\n");		
+		}
+
+		port = atoi(argv[2]);
+		
+	}
+	else{
+		Concurrency = 0;
+		if (debug == 1) printf("Using concurrency mode: none.\n");
+		port = atoi(argv[1]);	
+	}
+	if (port < 1024 || port > 65535) {
+        	fprintf(stderr, "%s", usage);
+        	exit(1);
+    	}
+
+	// Set the IP address and port for this server
+	struct sockaddr_in serverIPAddress;
+	memset(&serverIPAddress, 0, sizeof(serverIPAddress));
+	serverIPAddress.sin_family = AF_INET;
+	serverIPAddress.sin_addr.s_addr = INADDR_ANY;
+	serverIPAddress.sin_port = htons((u_short) port);
+	
+	// Allocate a socket
+	int masterSocket = socket(PF_INET, SOCK_STREAM, 0);
+	if (masterSocket < 0){
+		perror("socket");
+		exit(-1);
+	}
+	
+	// Set socket options to reuse port. Otherwise we will
+	// have to wait about 2 minutes before reusing the sae port number
+	int optval = 1;
+	int err = setsockopt(masterSocket, SOL_SOCKET, SO_REUSEADDR,
+	(char*) &optval, sizeof(int));
+	
+	// Bind the socket to the IP address and port
+	int error = bind(masterSocket,
+		(struct sockaddr *)&serverIPAddress,
+		sizeof(serverIPAddress));	
+	if (error){
+		perror("bind");
+		exit(-1);	
+	}
+	
+	// Put socket in listening mode and set the 
+	// size of the queue of unprocessed connections
+	error = listen(masterSocket, QueueLength);
+	if (error){
+		perror("listen");
+		exit(-1);
+	}
+	
+	if (debug == 1) printf("###Complete.\n");
+	if (debug == 1) printf("###\n");
+	
+	if (Concurrency == 2){
+		pthread_mutexattr_init(&mattr);
+		pthread_mutex_init(&mt, &mattr);
+		
+		pthread_t tid[5];
+		pthread_attr_t attr;
+
+		pthread_attr_init(&attr);
+		pthread_attr_setscope(&attr, PTHREAD_SCOPE_SYSTEM);
+	
+		for(int i = 0; i < 5; i ++){
+			pthread_create(&tid[i], &attr, (void * (*)(void *))poolSlave, (void *)masterSocket);
+		}	
+
+		pthread_join(tid[0], NULL);	
+	
+	}
+	else{
+		while(1){
+			// Accept incoming connections
+			struct sockaddr_in clientIPAddress;
+			int alen = sizeof(clientIPAddress);
+			int slaveSocket = accept(masterSocket, (struct sockaddr *)&clientIPAddress, (socklen_t*)&alen);
+			
+			if (slaveSocket < 0 ){
+				//if (errno == EINTR){
+				//	continue;
+				//}
+				
+				perror("accept");
+				exit(-1);
+			}
+		
+			if (Concurrency == 1){   //  -f
+				pid_t slave = fork();
+				
+				if (slave == 0){
+					// Process request.
+					processRequest(slaveSocket);
+					
+					// Close socket
+					close(slaveSocket);
+		
+					exit(1);	
+				}
+				
+				// Close socket
+				close(slaveSocket);
+			}
+			else{	// In the normal style:
+				// Process request.
+            			if ( slaveSocket < 0 ) {
+              				perror( "accept" );
+            		  		exit( -1 );
+            			}
+				processRequest(slaveSocket);
+				
+				// Close socket
+				close(slaveSocket);
+			}		
+		}		
+	}
+}
+
+
+void processRequest(int socket){
+	// Buffer used to store the name received from the client
+	const int MaxName = 1024;
+	char name[MaxName + 1];
+	int nameLength = 0;
+	int n;
+	char newChar;
+	int getCheck = 0;
+	char docPath[MaxName + 1];
+	int nameDocLength = 0;
+	int docDone = 0;
+ 	int docCheck = 0;
+
+	while ((n = read(socket, &newChar, sizeof(newChar)))) {
+        	name[nameLength++] = newChar;
+
+        	if (docCheck) {
+            		char character;
+            		docPath[nameDocLength++] = newChar;
+            		while ((n = read(socket, &newChar, sizeof(newChar)))) {
+                		if (newChar == ' ') {
+                    			docDone = 1;
+                    			docPath[nameDocLength++] = '\0';
+                    			break;
+                		}
+               			name[nameLength++] = newChar;
+               			docPath[nameDocLength++] = newChar;
+            		}
+        	}
+        	if (docDone) {
+            		docDone = 0;
+            		docCheck = 0;
+        	}
+	
+        	if (newChar == 'T') {
+            		if (name[nameLength - 2] == 'E' && name[nameLength - 3] == 'G') {
+                		getCheck = 1;
+            		}
+        	}
+        	if (newChar == ' ') {
+        	    	if (getCheck) {
+                		getCheck = 0;
+                		docCheck = 1;
+            		}
+        	}
+
+        	if (newChar == '\n') {
+            		if (name[nameLength - 2] == '\r' && name[nameLength - 3] == '\n'
+            			&& name[nameLength - 4] == '\r') {
+                		break;
+            		}
+        	}
+    	}
+
+    	printf("The GET request is: \n%s\n\n", name);
+
+    	//Mapping the document path to the real path file
+    	//char * cwd = (char *) malloc (256 * sizeof(char));
+    	char cwd[256] = {0};
+    	getcwd(cwd, 256);
+	
+	//To map the docPath to the root path  "/http-root-dir/" 
+    	if (!strncmp(docPath, "/icons", strlen("/icons"))
+    	 || !strncmp(docPath, "/htdocs", strlen("/htdocs"))
+     	|| !strncmp(docPath, "/cgi-bin", strlen("/cgi-bin"))) {
+        	strcat(cwd, "/http-root-dir/");
+        	strcat(cwd, docPath);
+    	} 
+	else {
+        	if (!strcmp(docPath, "/")) {
+            		strcpy(docPath, "/index.html");
+            		strcat(cwd, "/http-root-dir/htdocs");
+        	    	strcat(cwd, docPath);
+        	} else if (!strcmp(docPath, "..")) {
+       	     		strcat(cwd, "/http-root-dir/htdocs/");
+            		strcat(cwd, docPath);
+        	} else {
+            		strcat(cwd, "/http-root-dir/htdocs");
+            		strcat(cwd, docPath);
+        	}
+    	}
+
+    	if (strstr(docPath, "..") != 0) {
+        	char resolved[MaxName + 1] = {0};
+        	char * r = realpath(docPath, resolved);
+        	if (r == NULL) {
+            		perror("realpath");
+            		exit(0);
+        	}
+    	}
+
+    	char contentType[MaxName + 1] = {0};	
+
+	if (strstr(docPath, ".html") != 0) {
+		strcpy(contentType, "text/html");
+	}
+	else if (strstr(docPath, ".gif") != 0) {
+		strcpy(contentType, "image/gif");
+	}
+	else if (strstr(docPath, ".jpg") != 0) {
+		strcpy(contentType, "image/jpeg");
+	}
+	else {
+		strcpy(contentType, "text/plain");
+	}
+
+	FILE *document;
+	if (debug > 0){
+              	printf("### document begin to load \n");
+        }	
+
+	document = fopen(cwd, "rb");
+	
+	if (document != NULL ) {
+
+		if (debug > 0){
+			printf("### document > 0 \n");
+		}
+		const char * head = "HTTP/1.1 200 OK";
+		const char * server = "Server: Mattserv/1.0";
+		const char * contentTitle = "Content-Type: ";
+		const char * crlf = "\r\n";
+		write(socket, head, strlen(head));
+		write(socket, crlf, strlen(crlf));
+		write(socket, server, strlen(server));
+		write(socket, crlf, strlen(crlf));
+		write(socket, contentTitle, strlen(contentTitle));
+		write(socket, contentType, strlen(contentType));
+		write(socket, crlf, strlen(crlf));
+		write(socket, crlf, strlen(crlf));
+		if (strstr(contentType, "text/") != 0){
+			const char * str = "<html><body>a</body>\n";
+			//write(socket, str , sizeof(str));
+		}	
+		long count = 0;
+		
+		char c;
+		while (count = read(fileno(document), &c, sizeof(c))) {
+			if (write(socket, &c, sizeof(c)) != count) {
+				perror("write");
+				if (debug > 0){
+                        		printf("#--> Write Error\n");
+                		}
+				return;
+			}
+			if (debug > 0){
+                        	printf("%c", c);
+                	}
+
+		}
+		if (debug > 0){
+                        printf("### document ok! \n");
+                }
+		
+		fclose(document);
+		if (strstr(contentType, "text/") != 0){
+                        const char * str = "</html>\n";
+                        //write(socket, str , sizeof(str));
+                } 
+	}
+	else {
+		if (debug > 0){
+                        printf("### document not found \n");
+                }
+		const char *message = "<html><body>File not found!</body></html>";
+		
+		write(socket, "HTTP/1.1 404 File Not Found", 27);
+		write(socket, "\r\n", 2);
+		write(socket, "Server: Mattserv/1.0", 20);
+		write(socket, "\r\n", 2);
+		write(socket, "Content-type: text/html", 23);
+		write(socket, "\r\n", 2);
+		write(socket, "\r\n", 2);
+		
+		write(socket, message, strlen(message));
+	
+	}
+}
+
+void poolSlave(int socket){
+	while(1){
+		pthread_mutex_lock(&mt);
+
+		// Accept outside's connections
+		struct sockaddr_in clientIPAddress;
+		int alen = sizeof(clientIPAddress);
+		int slaveSocket = accept(socket, (struct sockaddr *)&clientIPAddress, (socklen_t*)&alen);
+		//check if accept worked
+		
+		pthread_mutex_unlock(&mt);
+	
+		if (slaveSocket < 0){
+			if (errno == EINTR){
+				continue;
+			}
+	
+			perror("accept");
+			exit(-1);
+		}
+		// Process request
+		processRequest(slaveSocket);
+		
+		// Close socket
+		close(slaveSocket);
+	}
+}
+
