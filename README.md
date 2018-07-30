@@ -9,15 +9,15 @@
 ### You can clone this project in your web server.  First:
 
 `git clone https://github.com/peter-rich/http-server.git./run.sh `
-`                                                                `
+                                                               
 `cd http-server/                                                 `
-`                                                                `
+                                                                
 `make clean                                                     `
-`                                                                `
+                                                                
 `make                                                            `
-`                                                                `
+                                                                
 `chmod +777 run.sh                                               `
-`                                                                ` 
+                                                                 
 `./run.sh                                                        ` 
 
 In the directory httpServer/
@@ -35,9 +35,9 @@ In the finger:
 In the jj:
 
 `Change the cgi-script/jj.c  search for the line www.zhanfuyang.com:50011 change it to your actual DNS and port`
-`                                                                                                              `
+                                                                                                        
 `make clean                                                                                                    `
-`                                                                                                              `
+                                                                                                              
 `make                                                                                                          `
 
 
