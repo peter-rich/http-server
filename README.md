@@ -22,7 +22,7 @@
 
 ### In the directory httpServer/
 
-Then 'http-root/' is the '/' directory.
+Then `http-root/` is the `/` directory.
 
 ### If you wan to run some bash online 
 
